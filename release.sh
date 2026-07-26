@@ -22,8 +22,11 @@
 #
 set -euo pipefail
 
-REPO="Fank1/glimpse"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+ORIGIN_URL="$(git -C "$ROOT" config --get remote.origin.url 2>/dev/null || echo "TrishankV/glimpse")"
+REPO="$(echo "$ORIGIN_URL" | sed -E 's/.*github\.com[:\/]([^\/]+\/[^\/\.]+)(\.git)?$/\1/')"
+[ -n "$REPO" ] || REPO="TrishankV/glimpse"
+
 META="$ROOT/plugin/_meta.lua"
 KOPLUGIN="glimpse.koplugin"           # folder name inside the zip
 
@@ -49,7 +52,7 @@ fi
 VERSION="$(sed -n 's/.*version *= *"\([^"]*\)".*/\1/p' "$META" | head -1)"
 [ -n "$VERSION" ] || { echo "ERROR: could not read version from $META" >&2; exit 1; }
 TAG="v$VERSION"
-echo "Preparing release $TAG"
+echo "Preparing release $TAG for $REPO"
 
 # 3. Full check + stage (builds dist/glimpse.koplugin), then the versioned zip.
 "$ROOT/builder/stage.sh"
@@ -64,16 +67,12 @@ if [ "${DRYRUN:-0}" = "1" ]; then
     exit 0
 fi
 
-# 4. Preflight: a release tag must anchor to a commit.
-DEFAULT_BRANCH="$(gh repo view "$REPO" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
-if [ -z "$DEFAULT_BRANCH" ]; then
-    echo "ERROR: $REPO has no commits yet — push the repo first." >&2
-    exit 1
-fi
+# 4. Target branch
+TARGET_BRANCH="$(git -C "$ROOT" branch --show-current 2>/dev/null || echo "main")"
 
 # 4b. Sync the source so the tag reflects this release, not just the zip.
 if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Syncing source to $REPO ($DEFAULT_BRANCH)…"
+    echo "Syncing source to $REPO ($TARGET_BRANCH)…"
     git -C "$ROOT" add -A
     if git -C "$ROOT" diff --cached --quiet; then
         echo "Source already up to date — nothing to commit."
@@ -83,14 +82,14 @@ if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
         echo "Committed source for $TAG."
     fi
-    git -C "$ROOT" push -q origin "$DEFAULT_BRANCH"
-    echo "Pushed source to $DEFAULT_BRANCH."
+    git -C "$ROOT" push -q origin "$TARGET_BRANCH"
+    echo "Pushed source to $TARGET_BRANCH."
 else
     echo "WARNING: $ROOT is not a git repo — skipping source sync." >&2
 fi
 
 # 5. Publish (or update) the release and attach the zip.
-[ -n "$NOTES" ] || NOTES="Glimpse $TAG"
+[ -n "$NOTES" ] || NOTES="Glimpse $TAG: Reference Drawer Home Menu, publisher-provided reference pages, and KOReader X-Ray character adapter integration."
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
     echo "Release $TAG exists — replacing its asset."
     gh release upload "$TAG" "$ZIP" --repo "$REPO" --clobber
@@ -98,7 +97,7 @@ else
     echo "Creating release $TAG on $REPO${PRERELEASE_FLAG:+ (pre-release)}…"
     gh release create "$TAG" "$ZIP" \
         --repo "$REPO" \
-        --target "$DEFAULT_BRANCH" \
+        --target "$TARGET_BRANCH" \
         --title "$TAG" \
         --notes "$NOTES" \
         $PRERELEASE_FLAG
