@@ -76,6 +76,7 @@ local FILTER_KEY = "glimpse_filter"
 local INVERT_KEY = "glimpse_invert_night"
 local NAV_BUTTONS_KEY = "glimpse_nav_buttons" -- prev/next buttons, off by default
 local CAPTIONS_KEY = "glimpse_captions"        -- caption overlay, ON by default (nilOrTrue)
+local FLASHCARD_MODE_KEY = "glimpse_flashcard_mode" -- compact card-style peek mode, off by default
 local TOP_MENU_KEY = "glimpse_top_menu_zone"   -- tap top strip → KOReader top menu, ON by default (nilOrTrue)
 local GESTURE_TIP_KEY = "glimpse_gesture_tip_shown" -- one-time menu-open nudge to bind a gesture
 -- Which actions appear in the viewer's ⋯ popup ("Quick Actions", configured
@@ -335,6 +336,47 @@ function GlimpseBadge:paintTo(bb, x, y)
 end
 
 function GlimpseBadge:free()
+    if self._bg_bb then self._bg_bb:free(); self._bg_bb = nil end
+    if self._txt then self._txt:free() end
+end
+
+-- A tiny pill for the compact flashcard mode: a playful, rounded badge
+-- that keeps the drawer feeling light and friendly without taking over.
+local GlimpseFlashcardBadge = Widget:extend{
+    text = "peek",
+    height = Screen:scaleBySize(20),
+    radius = Screen:scaleBySize(8),
+    stroke = Screen:scaleBySize(1),
+    pad_h = Screen:scaleBySize(6),
+}
+
+function GlimpseFlashcardBadge:init()
+    self._txt = TextWidget:new{
+        text = self.text,
+        face = Font:getFace("cfont", 11),
+        bold = true,
+        fgcolor = Blitbuffer.COLOR_BLACK,
+    }
+    self._w = self._txt:getSize().w + 2 * self.pad_h
+end
+
+function GlimpseFlashcardBadge:getSize()
+    return Geom:new{ w = self._w, h = self.height }
+end
+
+function GlimpseFlashcardBadge:paintTo(bb, x, y)
+    self.dimen = Geom:new{ x = x, y = y, w = self._w, h = self.height }
+    if not self._bg_bb then
+        self._bg_bb = make_rounded_stencil(self._w, self.height,
+            self.radius, self.stroke, 0xFF, 0x00)
+    end
+    bb:alphablitFrom(self._bg_bb, x, y, 0, 0, self._w, self.height)
+    local ts = self._txt:getSize()
+    self._txt:paintTo(bb, x + math.floor((self._w - ts.w) / 2),
+        y + math.floor((self.height - ts.h) / 2))
+end
+
+function GlimpseFlashcardBadge:free()
     if self._bg_bb then self._bg_bb:free(); self._bg_bb = nil end
     if self._txt then self._txt:free() end
 end
@@ -620,10 +662,10 @@ local GlimpseMenuRow = Widget:extend{
     icon_bb = nil,      -- pre-rendered icon blitbuffer, or nil
     lead_wg = nil,      -- widget drawn in the icon column instead (checkbox)
     width = 0,          -- shared row width (set by the menu)
-    height = Screen:scaleBySize(44),
+    height = Screen:scaleBySize(48),
     icon_col = 0,       -- reserved icon+gap width (0 if no row has an icon)
     icon_size = Screen:scaleBySize(18),
-    pad_left = Screen:scaleBySize(16),
+    pad_left = Screen:scaleBySize(18),
 }
 
 function GlimpseMenuRow:init()
@@ -672,11 +714,11 @@ end
 local GlimpsePopupMenu = InputContainer:extend{
     items = nil,    -- { {text=, icon=<svg path or nil>, callback=}, ... }
     anchor = nil,   -- function -> Geom (like MovableContainer's anchor)
-    pad_left = Screen:scaleBySize(16),
-    pad_right = Screen:scaleBySize(16),
+    pad_left = Screen:scaleBySize(18),
+    pad_right = Screen:scaleBySize(18),
     icon_size = Screen:scaleBySize(18),
-    icon_gap = Screen:scaleBySize(12),
-    row_h = Screen:scaleBySize(44),
+    icon_gap = Screen:scaleBySize(14),
+    row_h = Screen:scaleBySize(48),
 }
 
 function GlimpsePopupMenu:init()
@@ -741,9 +783,9 @@ function GlimpsePopupMenu:init()
         FrameContainer:new{
             background = Blitbuffer.COLOR_WHITE,
             bordersize = Screen:scaleBySize(2),
-            radius = Screen:scaleBySize(9),
-            padding = 0,
-            margin = 0,
+            radius = Screen:scaleBySize(12),
+            padding = Screen:scaleBySize(4),
+            margin = Screen:scaleBySize(4),
             vg,
         },
     }
@@ -900,7 +942,11 @@ function GlimpseViewer:update()
     self:_clean_image_wg()
     local orig_dimen = self.main_frame.dimen
 
-    self._panel_w = math.floor(Screen:getWidth() * self.panel_ratio)
+    local flashcard = G_reader_settings:isTrue(FLASHCARD_MODE_KEY)
+    self._flashcard_mode = flashcard
+    self.panel_vgap = flashcard and Screen:scaleBySize(20) or 0
+    self.image_right_gap = flashcard and Screen:scaleBySize(8) or Screen:scaleBySize(12)
+    self._panel_w = math.floor(Screen:getWidth() * (flashcard and 0.70 or self.panel_ratio))
     self._panel_h = Screen:getHeight() - 2 * self.panel_vgap
     -- content area inside the drawer's border (top/right/bottom only — the
     -- left edge is borderless and flush with the screen); self.width/height
@@ -939,6 +985,8 @@ function GlimpseViewer:update()
     if self._nav_prev_frame then self._nav_prev_frame:free() end
     if self._nav_next_frame then self._nav_next_frame:free() end
     self._nav_prev_frame, self._nav_next_frame = nil, nil
+    local button_size = flashcard and Screen:scaleBySize(34) or Screen:scaleBySize(42)
+    local button_icon_size = flashcard and Screen:scaleBySize(14) or Screen:scaleBySize(18)
     local nav = G_reader_settings:isTrue(NAV_BUTTONS_KEY)
         and self._images_list and (self._images_list_nb or 1) > 1
     local cur = self._images_list_cur or 1
@@ -957,6 +1005,8 @@ function GlimpseViewer:update()
     end
     if nav then
         self._nav_prev_frame = GlimpseMoreButton:new{
+            size = button_size,
+            icon_size = button_icon_size,
             icon = _PLUGIN_DIR .. "/assets/prev.svg",
             disabled = cur <= 1 or nil,
         }
@@ -966,6 +1016,8 @@ function GlimpseViewer:update()
         }
         table.insert(overlay, self._nav_prev_frame)
         self._nav_next_frame = GlimpseMoreButton:new{
+            size = button_size,
+            icon_size = button_icon_size,
             icon = _PLUGIN_DIR .. "/assets/next.svg",
             disabled = cur >= nb or nil,
         }
@@ -1046,6 +1098,17 @@ function GlimpseViewer:update()
         }
         table.insert(overlay, self._pill_frame)
     end
+    if self._flashcard_badge then self._flashcard_badge:free() end
+    self._flashcard_badge = nil
+    if flashcard then
+        self._flashcard_badge = GlimpseFlashcardBadge:new{ text = _("peek") }
+        self._flashcard_badge.overlap_offset = {
+            Screen:scaleBySize(12),
+            Screen:scaleBySize(12),
+        }
+        table.insert(overlay, self._flashcard_badge)
+    end
+
     -- caption overlay, top-left on the image (toggleable, on by default)
     if self._caption_wg then
         self._caption_wg:free()
@@ -3894,6 +3957,18 @@ function Glimpse:_menuItems()
             callback = function()
                 G_reader_settings:saveSetting(NAV_BUTTONS_KEY,
                     not G_reader_settings:isTrue(NAV_BUTTONS_KEY))
+            end,
+        },
+        {
+            text = _("Cute flashcard mode"),
+            help_text = _("Switch Glimpse into a smaller, friendlier card-style view with compact controls for quick peeks."),
+            checked_func = function()
+                return G_reader_settings:isTrue(FLASHCARD_MODE_KEY)
+            end,
+            callback = function()
+                G_reader_settings:saveSetting(FLASHCARD_MODE_KEY,
+                    not G_reader_settings:isTrue(FLASHCARD_MODE_KEY))
+                if self._viewer then self._viewer:update() end
             end,
         },
         {
