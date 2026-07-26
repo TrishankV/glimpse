@@ -138,6 +138,15 @@ FILES = {
         '<image xlink:href="../images/map.svg" width="900" height="700"/>\n'
         "</svg>",
     ),
+    "OEBPS/text/characters.xhtml": xhtml(
+        "Characters",
+        "<h1>Characters</h1><dl><dt>Ada Rowan</dt><dd>Cartographer of the Realm.</dd>"
+        "<dt>Ben Vale</dt><dd>Keeper of the eastern gate.</dd></dl>",
+    ),
+    "OEBPS/text/glossary.xhtml": xhtml(
+        "Glossary",
+        "<h1>Glossary</h1><dl><dt>Glimmer</dt><dd>A blue light seen before storms.</dd></dl>",
+    ),
 }
 
 MANIFEST_ITEMS = [
@@ -162,8 +171,10 @@ MANIFEST_ITEMS = [
     ("ch3", "text/ch3.xhtml", "application/xhtml+xml", ""),
     ("ch4", "text/ch4.xhtml", "application/xhtml+xml", ""),
     ("ch5", "text/ch5.xhtml", "application/xhtml+xml", ""),
+    ("characters", "text/characters.xhtml", "application/xhtml+xml", ""),
+    ("glossary", "text/glossary.xhtml", "application/xhtml+xml", ""),
 ]
-SPINE = ["cover", "title", "ch1", "ch2", "ch3", "ch4", "ch5"]
+SPINE = ["cover", "title", "ch1", "ch2", "ch3", "ch4", "ch5", "characters", "glossary"]
 
 manifest = "\n".join(
     f'    <item id="{i}" href="{h}" media-type="{m}"{extra}/>'

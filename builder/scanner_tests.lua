@@ -5,6 +5,7 @@
 
 local HERE = (arg[0] or "scanner_tests.lua"):match("^(.*)/[^/]*$") or "."
 local scanner = dofile(HERE .. "/../plugin/glimpse_scanner.lua")
+local references = dofile(HERE .. "/../plugin/glimpse_references.lua")
 local FIXTURE = HERE .. "/fixture_extracted"
 
 local n_pass, n_fail = 0, 0
@@ -18,6 +19,27 @@ local function check(cond, label, extra)
 end
 local function eq(got, want, label)
     check(got == want, label, string.format("want %s, got %s", tostring(want), tostring(got)))
+end
+
+-- ── publisher-provided references ──────────────────────────────────────────
+
+do
+    local function read_file(path)
+        local f = io.open(FIXTURE .. "/" .. path, "rb")
+        if not f then return nil end
+        local d = f:read("*a")
+        f:close()
+        return d
+    end
+    local refs, err = references.scan(read_file)
+    check(refs ~= nil, "reference scan succeeds", err)
+    if refs then
+        eq(#refs.references, 2, "reference count")
+        eq(refs.references[1].kind, "characters", "characters detected")
+        eq(refs.references[2].kind, "glossary", "glossary detected")
+        local text = references.read_text(read_file, refs.references[1])
+        check(text and text:find("Ada Rowan", 1, true), "reference text is read lazily")
+    end
 end
 
 -- ── dimension sniffers (synthetic bytes) ────────────────────────────────────
@@ -127,7 +149,7 @@ check(scan ~= nil, "fixture scan succeeds", err)
 
 if scan then
     eq(#scan.images, 14, "image count")
-    eq(scan.spine_count, 7, "spine count")
+    eq(scan.spine_count, 9, "spine count")
     eq(scan.cover_path, "OEBPS/images/cover.png", "cover path from OPF")
 
     local by = {}

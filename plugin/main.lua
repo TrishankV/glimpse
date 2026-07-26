@@ -31,6 +31,7 @@ local OverlapGroup = require("ui/widget/overlapgroup")
 local RenderImage = require("ui/renderimage")
 local TextWidget = require("ui/widget/textwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
+local TextViewer = require("ui/widget/textviewer")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local Widget = require("ui/widget/widget")
@@ -50,8 +51,14 @@ do
     local ok, mod = pcall(dofile, _PLUGIN_DIR .. "/glimpse_scanner.lua")
     if ok then scanner = mod end
 end
+local references
+do
+    local ok, mod = pcall(dofile, _PLUGIN_DIR .. "/glimpse_references.lua")
+    if ok then references = mod end
+end
 
 local SCOPE_KEY = "glimpse_scope"    -- "read_so_far" | "whole_book"
+local DEFAULT_VIEW_KEY = "glimpse_default_view" -- images | characters | references
 -- "all" = filtering off; anything else = the built-in "balanced" scanner
 -- level. (The scanner still knows strict/relaxed internally, but they are
 -- not exposed: corpus analysis showed strict silently drops real figures
@@ -79,6 +86,7 @@ local QUICK_ACTIONS = {
     { key = "prevnext",   default = false },
     { key = "captions",   default = false },
     { key = "invert",     default = true  },
+    { key = "references", default = false },
 }
 local function _quick_enabled(key)
     local cfg = G_reader_settings:readSetting(QUICK_ACTIONS_KEY)
@@ -99,6 +107,7 @@ local function _quick_label(key)
         prevnext   = _("Show Nav Buttons Toggle"),
         captions   = _("Show Image Captions Toggle"),
         invert     = _("Invert in Night Mode Toggle"),
+        references = _("Book References"),
     })[key] or key
 end
 
@@ -1914,6 +1923,12 @@ function GlimpseViewer:_showMoreMenu()
             callback = function() self:_enterGallery() end,
         }
     end
+    if _quick_enabled("references") and self.on_show_references then
+        items[#items + 1] = {
+            text = _("Book References"),
+            callback = function() self.on_show_references() end,
+        }
+    end
     if _quick_enabled("hide") then
         items[#items + 1] = {
             text = _("Hide Image"),
@@ -2557,7 +2572,7 @@ function Glimpse:init()
 end
 
 function Glimpse:onGlimpseShow()
-    self:showViewer()
+    self:open()
     return true
 end
 
@@ -2567,6 +2582,7 @@ function Glimpse:onCloseDocument()
         if self._bb_cache.bb then self._bb_cache.bb:free() end
         self._bb_cache = nil
     end
+    self._references = nil
 end
 
 -- ── settings ────────────────────────────────────────────────────────────────
@@ -2578,6 +2594,12 @@ end
 function Glimpse:getFilterLevel()
     return G_reader_settings:readSetting(FILTER_KEY) == "all"
         and "all" or "balanced"
+end
+
+function Glimpse:getDefaultView()
+    local view = G_reader_settings:readSetting(DEFAULT_VIEW_KEY) or "images"
+    if view == "characters" or view == "references" then return view end
+    return "images"
 end
 
 function Glimpse:_hiddenPaths()
@@ -2726,6 +2748,107 @@ function Glimpse:_getScan(force)
     cache:saveSetting("scan", result)
     cache:flush()
     return result
+end
+
+-- Reference metadata is cached alongside the image scan. It contains paths,
+-- titles and short previews only; the full XHTML page stays in the EPUB until
+-- a reader explicitly opens it.
+function Glimpse:_getReferences(force)
+    if self._references and not force then return self._references end
+    if not references then return nil, "unavailable" end
+    local doc = self.ui.document
+    local a = lfs.attributes(doc.file)
+    local mtime, size = (a and a.modification or 0), (a and a.size or 0)
+    local cache = LuaSettings:open(self:_cachePath())
+    if not force then
+        local cached = cache:readSetting("references")
+        if cached and cached.version == references.VERSION
+                and cache:readSetting("references_mtime") == mtime
+                and cache:readSetting("references_size") == size then
+            self._references = cached
+            return cached
+        end
+    end
+    local read_file, close = self:_makeReader()
+    local ok, result, err = pcall(references.scan, read_file)
+    close()
+    if not ok or not result then return nil, err or "error" end
+    self._references = result
+    cache:saveSetting("references_mtime", mtime)
+    cache:saveSetting("references_size", size)
+    cache:saveSetting("references", result)
+    cache:flush()
+    return result
+end
+
+function Glimpse:_showReference(record)
+    local read_file, close = self:_makeReader()
+    local body = references.read_text(read_file, record)
+    close()
+    if not body or body == "" then
+        UIManager:show(InfoMessage:new{ text = _("Could not read this reference page.") })
+        return false
+    end
+    UIManager:show(TextViewer:new{
+        title = record.title,
+        text = body,
+        text_type = "book_info",
+        add_default_buttons = true,
+    })
+    return true
+end
+
+-- kind may be "characters" for the direct default view, or nil to show the
+-- compact index of every publisher-provided reference page.
+function Glimpse:showReferences(kind)
+    local ok, msg = self:_supportedReason()
+    if not ok then UIManager:show(InfoMessage:new{ text = msg }); return false end
+    local found, err = self:_getReferences()
+    if not found then
+        UIManager:show(InfoMessage:new{ text = _("Could not scan this book for reference pages.") })
+        return false
+    end
+    local list = {}
+    for _, record in ipairs(found.references or {}) do
+        if not kind or record.kind == kind then list[#list + 1] = record end
+    end
+    if #list == 0 then
+        if kind == "characters" then
+            UIManager:show(InfoMessage:new{ text = _("No character list was found in this book.") })
+        else
+            UIManager:show(InfoMessage:new{ text = _("No publisher-provided reference pages were found in this book.") })
+        end
+        return false
+    end
+    if #list == 1 then return self:_showReference(list[1]) end
+    local dialog
+    local buttons = {}
+    for _, record in ipairs(list) do
+        local entry = record
+        buttons[#buttons + 1] = {{
+            text = entry.title,
+            callback = function()
+                UIManager:close(dialog)
+                self:_showReference(entry)
+            end,
+        }}
+    end
+    buttons[#buttons + 1] = {{ text = _("Close"), callback = function()
+        UIManager:close(dialog)
+    end }}
+    dialog = ButtonDialog:new{
+        title = _("Book References"),
+        buttons = buttons,
+        rows_per_page = 6,
+    }
+    UIManager:show(dialog)
+    return true
+end
+
+function Glimpse:open()
+    local default = self:getDefaultView()
+    if default ~= "images" and self:showReferences(default) then return end
+    self:showViewer()
 end
 
 -- ── rendering ───────────────────────────────────────────────────────────────
@@ -2988,6 +3111,9 @@ function Glimpse:showViewer(whole_book_once)
             end
             self.ui.rolling:onGotoXPointer(
                 string.format("/body/DocFragment[%d]", meta.spine_index))
+        end,
+        on_show_references = function()
+            self:showReferences()
         end,
         -- the viewer closed itself on a G-sensor rotation: re-layout the
         -- reader, then reopen (zoom/pan persistence restores the view)
@@ -3482,7 +3608,7 @@ function Glimpse:_menuItems()
                 -- let the menu-close animation finish, or the page repaint
                 -- lands on top of the viewer
                 UIManager:scheduleIn(0.3, function()
-                    self:showViewer()
+                    self:open()
                     -- first menu-open without a gesture bound: nudge once,
                     -- on top of the now-open drawer (gated on the viewer
                     -- actually opening, so unsupported/empty books don't tip)
@@ -3495,6 +3621,35 @@ function Glimpse:_menuItems()
                     end
                 end)
             end,
+        },
+        {
+            text_func = function()
+                local labels = {
+                    images = _("Last viewed image"),
+                    characters = _("Characters"),
+                    references = _("Book references"),
+                }
+                return T(_("Default view: %1"), labels[self:getDefaultView()])
+            end,
+            help_text = _("Choose what opens when you use Open Glimpse. Last viewed image preserves Glimpse's original instant map-opening behavior."),
+            sub_item_table = {
+                {
+                    text = _("Last viewed image"), radio = true,
+                    checked_func = function() return self:getDefaultView() == "images" end,
+                    callback = function() G_reader_settings:saveSetting(DEFAULT_VIEW_KEY, "images") end,
+                },
+                {
+                    text = _("Characters"), radio = true,
+                    checked_func = function() return self:getDefaultView() == "characters" end,
+                    callback = function() G_reader_settings:saveSetting(DEFAULT_VIEW_KEY, "characters") end,
+                },
+                {
+                    text = _("Book references"), radio = true,
+                    checked_func = function() return self:getDefaultView() == "references" end,
+                    callback = function() G_reader_settings:saveSetting(DEFAULT_VIEW_KEY, "references") end,
+                },
+            },
+            separator = true,
         },
         {
             -- the full option name, not an abbreviation, so the current
@@ -3621,10 +3776,14 @@ function Glimpse:_menuItems()
                         local okay = self:_supportedReason()
                         if not okay then return end
                         self._scan = nil
+                        self._references = nil
                         local info = InfoMessage:new{ text = _("Scanning book for images…") }
                         UIManager:show(info)
                         UIManager:forceRePaint()
                         local scan = self:_getScan(true)
+                        -- Keep the reference index in lockstep with an
+                        -- explicit rescan too; it shares the same EPUB cache.
+                        if scan and references then self:_getReferences(true) end
                         UIManager:close(info)
                         if scan then
                             UIManager:show(Notification:new{

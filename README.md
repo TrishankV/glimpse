@@ -31,6 +31,9 @@ were.
 - **Night-mode friendly:** line-art illustrations with transparent
   backgrounds get a white backing so they stay visible (and clean-edged)
   in night mode instead of vanishing against the dark page.
+- Finds publisher-provided **Characters**, **Glossary**, **Places**,
+  **Timeline** and appendix-style pages in EPUBs. These are read lazily from
+  the book, so the reference feature does not retain chapter text in memory.
 
 ## Installation
 
@@ -75,6 +78,8 @@ Updates → *Check for updates*.
 | Mode: Show images up to current chapter *(default)* | Images past your current chapter stay hidden (no spoilers). |
 | Mode: Show all images | Everything, incl. parts you haven't reached. |
 | Quick Actions | Choose which actions appear in the viewer's ⋯ menu: Gallery, Hide Image, the Mode switch, Rotate 90°, Show in Book, Restore hidden images, Show Nav Buttons, Show Image Captions and Invert in Night Mode. Defaults to the original six; the last three are off until you add them. (Reset Rotation is automatic; Restore only appears when something is hidden.) |
+| Default view | Choose **Last viewed image** (the default, original Glimpse behaviour), Characters, or Book references when opening Glimpse. If the chosen reference is unavailable, Glimpse falls back to the image viewer. |
+| Quick Actions → Book References | Add the book's detected reference pages to the viewer's ⋯ menu without changing the normal image-first opening flow. |
 | Restore hidden images | Undo the viewer's per-book **Remove image from collection**. |
 | Advanced → Hide irrelevant images *(checkbox, on)* | Hides covers, publisher logos, ornaments and other non-reference imagery. Off = every image in the book. |
 | Advanced → Show image captions (beta) *(checkbox, on)* | Show the image's caption from the book as a solid tab tucked into the viewer's top-left corner (white with black text in day mode, black with white text at night), wrapping onto multiple lines for longer captions. |
