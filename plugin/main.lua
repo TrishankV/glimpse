@@ -2794,6 +2794,20 @@ function Glimpse:_showReference(record)
         text = body,
         text_type = "book_info",
         add_default_buttons = true,
+        extra_buttons = record.spine_index and {
+            {
+                {
+                    text = _("Show in Book"),
+                    callback = function(viewer)
+                        UIManager:close(viewer)
+                        if self.ui and self.ui.rolling then
+                            self.ui.rolling:onGotoXPointer(
+                                string.format("/body/DocFragment[%d]", record.spine_index))
+                        end
+                    end,
+                }
+            }
+        } or nil,
     })
     return true
 end

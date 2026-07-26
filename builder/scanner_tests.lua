@@ -39,6 +39,7 @@ do
         eq(refs.references[2].kind, "glossary", "glossary detected")
         local text = references.read_text(read_file, refs.references[1])
         check(text and text:find("Ada Rowan", 1, true), "reference text is read lazily")
+        check(text and text:find("\n"), "reference text preserves line breaks")
     end
 end
 
