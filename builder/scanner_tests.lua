@@ -6,15 +6,16 @@
 local HERE = (arg[0] or "scanner_tests.lua"):match("^(.*)/[^/]*$") or "."
 local scanner = dofile(HERE .. "/../plugin/glimpse_scanner.lua")
 local references = dofile(HERE .. "/../plugin/glimpse_references.lua")
+local xray = dofile(HERE .. "/../plugin/glimpse_xray.lua")
 local FIXTURE = HERE .. "/fixture_extracted"
 
 local n_pass, n_fail = 0, 0
-local function check(cond, label, extra)
+local function check(cond, label, detail)
     if cond then
         n_pass = n_pass + 1
     else
         n_fail = n_fail + 1
-        io.stderr:write("FAIL: " .. label .. (extra and (" — " .. tostring(extra)) or "") .. "\n")
+        io.stderr:write(string.format("FAIL: %s (%s)\n", label, detail or "unspecified"))
     end
 end
 local function eq(got, want, label)
@@ -34,12 +35,43 @@ do
     local refs, err = references.scan(read_file)
     check(refs ~= nil, "reference scan succeeds", err)
     if refs then
-        eq(#refs.references, 2, "reference count")
+        eq(#refs.references, 3, "reference count (characters, glossary, places)")
         eq(refs.references[1].kind, "characters", "characters detected")
         eq(refs.references[2].kind, "glossary", "glossary detected")
+        eq(refs.references[3].kind, "places", "places detected (table layout)")
+
         local text = references.read_text(read_file, refs.references[1])
         check(text and text:find("Ada Rowan", 1, true), "reference text is read lazily")
         check(text and text:find("\n"), "reference text preserves line breaks")
+
+        local places_text = references.read_text(read_file, refs.references[3])
+        check(places_text and places_text:find("Greyhold", 1, true), "table reference text extracted")
+    end
+end
+
+-- ── X-Ray adapter tests ──────────────────────────────────────────────────────
+
+do
+    local function read_file(path)
+        local f = io.open(HERE .. "/fixture.sdr/xray.json", "rb")
+        if not f then return nil end
+        local d = f:read("*a")
+        f:close()
+        return d
+    end
+
+    local result, err = xray.scan(HERE .. "/fixture.epub", read_file)
+    check(result ~= nil, "X-Ray scan succeeds", err)
+    if result then
+        eq(#result.characters, 1, "X-Ray character count")
+        eq(result.characters[1].name, "Kaelen Vane", "X-Ray character name")
+        eq(result.characters[1].aliases[1], "Commander Vane", "X-Ray character alias")
+
+        local formatted = xray.format_characters(result.characters)
+        check(formatted and formatted:find("Kaelen Vane", 1, true), "X-Ray formatting")
+
+        local merged = xray.merge("Book Characters: Ada Rowan", result.characters, "combine")
+        check(merged and merged:find("Ada Rowan") and merged:find("Kaelen Vane"), "Combined book + X-Ray characters")
     end
 end
 

@@ -56,9 +56,17 @@ do
     local ok, mod = pcall(dofile, _PLUGIN_DIR .. "/glimpse_references.lua")
     if ok then references = mod end
 end
+local xray
+do
+    local ok, mod = pcall(dofile, _PLUGIN_DIR .. "/glimpse_xray.lua")
+    if ok then xray = mod end
+end
 
-local SCOPE_KEY = "glimpse_scope"    -- "read_so_far" | "whole_book"
-local DEFAULT_VIEW_KEY = "glimpse_default_view" -- images | characters | references
+local SCOPE_KEY = "glimpse_scope"           -- "read_so_far" | "whole_book"
+local DEFAULT_VIEW_KEY = "glimpse_default_view" -- menu | images | characters | glossary | references
+local REFS_ENABLED_KEY = "glimpse_refs_enabled" -- boolean, default true
+local USE_XRAY_KEY = "glimpse_use_xray"         -- boolean, default true
+local XRAY_PREF_KEY = "glimpse_xray_pref"        -- "combine" | "book_only" | "xray_only"
 -- "all" = filtering off; anything else = the built-in "balanced" scanner
 -- level. (The scanner still knows strict/relaxed internally, but they are
 -- not exposed: corpus analysis showed strict silently drops real figures
@@ -2598,8 +2606,22 @@ end
 
 function Glimpse:getDefaultView()
     local view = G_reader_settings:readSetting(DEFAULT_VIEW_KEY) or "images"
-    if view == "characters" or view == "references" then return view end
+    if view == "menu" or view == "characters" or view == "glossary" or view == "references" then return view end
     return "images"
+end
+
+function Glimpse:areReferencesEnabled()
+    local val = G_reader_settings:readSetting(REFS_ENABLED_KEY)
+    return val == nil or val == true
+end
+
+function Glimpse:isXRayEnabled()
+    local val = G_reader_settings:readSetting(USE_XRAY_KEY)
+    return val == nil or val == true
+end
+
+function Glimpse:getXRayPref()
+    return G_reader_settings:readSetting(XRAY_PREF_KEY) or "combine"
 end
 
 function Glimpse:_hiddenPaths()
@@ -2812,29 +2834,146 @@ function Glimpse:_showReference(record)
     return true
 end
 
--- kind may be "characters" for the direct default view, or nil to show the
--- compact index of every publisher-provided reference page.
+function Glimpse:showHomeMenu()
+    local dialog
+    local buttons = {
+        {{
+            text = _("📷 Images"),
+            callback = function()
+                UIManager:close(dialog)
+                self:showViewer()
+            end,
+        }},
+        {{
+            text = _("👤 Characters"),
+            callback = function()
+                UIManager:close(dialog)
+                self:showReferences("characters")
+            end,
+        }},
+        {{
+            text = _("📖 Glossary"),
+            callback = function()
+                UIManager:close(dialog)
+                self:showReferences("glossary")
+            end,
+        }},
+        {{
+            text = _("📚 Other References"),
+            callback = function()
+                UIManager:close(dialog)
+                self:showReferences(nil)
+            end,
+        }},
+        {{
+            text = _("Close"),
+            callback = function()
+                UIManager:close(dialog)
+            end,
+        }},
+    }
+    dialog = ButtonDialog:new{
+        title = _("Glimpse Reference Drawer"),
+        buttons = buttons,
+    }
+    UIManager:show(dialog)
+end
+
+-- kind may be "characters", "glossary", or nil to show all detected reference pages.
 function Glimpse:showReferences(kind)
-    local ok, msg = self:_supportedReason()
-    if not ok then UIManager:show(InfoMessage:new{ text = msg }); return false end
-    local found, err = self:_getReferences()
-    if not found then
-        UIManager:show(InfoMessage:new{ text = _("Could not scan this book for reference pages.") })
+    if not self:areReferencesEnabled() then
+        UIManager:show(InfoMessage:new{ text = _("Reference detection is currently disabled in Glimpse settings.") })
         return false
     end
+    local ok, msg = self:_supportedReason()
+    if not ok then UIManager:show(InfoMessage:new{ text = msg }); return false end
+
+    -- Check for X-Ray character data integration when requesting "characters"
+    local xray_data = nil
+    if kind == "characters" and xray and self:isXRayEnabled() then
+        local doc = self.ui.document
+        if doc and doc.file then
+            local read_file = function(p)
+                local f = io.open(p, "rb")
+                if not f then return nil end
+                local d = f:read("*a")
+                f:close()
+                return d
+            end
+            xray_data = xray.scan(doc.file, read_file)
+        end
+    end
+
+    local pref = self:getXRayPref()
+    if kind == "characters" and xray_data and pref == "xray_only" then
+        local text = xray.format_characters(xray_data.characters)
+        UIManager:show(TextViewer:new{
+            title = _("Characters (X-Ray)"),
+            text = text,
+            text_type = "book_info",
+            add_default_buttons = true,
+        })
+        return true
+    end
+
+    local found, err = self:_getReferences()
     local list = {}
-    for _, record in ipairs(found.references or {}) do
+    for _, record in ipairs((found and found.references) or {}) do
         if not kind or record.kind == kind then list[#list + 1] = record end
     end
+
     if #list == 0 then
+        if kind == "characters" and xray_data then
+            local text = xray.format_characters(xray_data.characters)
+            UIManager:show(TextViewer:new{
+                title = _("Characters (X-Ray)"),
+                text = text,
+                text_type = "book_info",
+                add_default_buttons = true,
+            })
+            return true
+        end
         if kind == "characters" then
             UIManager:show(InfoMessage:new{ text = _("No character list was found in this book.") })
+        elseif kind == "glossary" then
+            UIManager:show(InfoMessage:new{ text = _("No glossary was found in this book.") })
         else
             UIManager:show(InfoMessage:new{ text = _("No publisher-provided reference pages were found in this book.") })
         end
         return false
     end
-    if #list == 1 then return self:_showReference(list[1]) end
+
+    if #list == 1 then
+        if kind == "characters" and xray_data and pref == "combine" then
+            local read_file, close = self:_makeReader()
+            local book_text = references.read_text(read_file, list[1])
+            close()
+            local combined = xray.merge(book_text, xray_data.characters, "combine")
+            UIManager:show(TextViewer:new{
+                title = list[1].title,
+                text = combined,
+                text_type = "book_info",
+                add_default_buttons = true,
+                extra_buttons = list[1].spine_index and {
+                    {
+                        {
+                            text = _("Show in Book"),
+                            callback = function(viewer)
+                                UIManager:close(viewer)
+                                if self.ui and self.ui.rolling then
+                                    self.ui.rolling:onGotoXPointer(
+                                        string.format("/body/DocFragment[%d]", list[1].spine_index))
+                                end
+                            end,
+                        }
+                    }
+                } or nil,
+            })
+            return true
+        end
+        return self:_showReference(list[1])
+    end
+
     local dialog
     local buttons = {}
     for _, record in ipairs(list) do
@@ -2861,7 +3000,13 @@ end
 
 function Glimpse:open()
     local default = self:getDefaultView()
-    if default ~= "images" and self:showReferences(default) then return end
+    if default == "menu" then
+        self:showHomeMenu()
+        return
+    elseif default == "characters" or default == "glossary" or default == "references" then
+        local kind = (default == "references") and nil or default
+        if self:showReferences(kind) then return end
+    end
     self:showViewer()
 end
 
@@ -3639,14 +3784,21 @@ function Glimpse:_menuItems()
         {
             text_func = function()
                 local labels = {
+                    menu = _("Home Menu"),
                     images = _("Last viewed image"),
                     characters = _("Characters"),
+                    glossary = _("Glossary"),
                     references = _("Book references"),
                 }
                 return T(_("Default view: %1"), labels[self:getDefaultView()])
             end,
-            help_text = _("Choose what opens when you use Open Glimpse. Last viewed image preserves Glimpse's original instant map-opening behavior."),
+            help_text = _("Choose what opens when you use Open Glimpse. Home Menu shows the new Reference Drawer landing view."),
             sub_item_table = {
+                {
+                    text = _("Home Menu"), radio = true,
+                    checked_func = function() return self:getDefaultView() == "menu" end,
+                    callback = function() G_reader_settings:saveSetting(DEFAULT_VIEW_KEY, "menu") end,
+                },
                 {
                     text = _("Last viewed image"), radio = true,
                     checked_func = function() return self:getDefaultView() == "images" end,
@@ -3658,9 +3810,50 @@ function Glimpse:_menuItems()
                     callback = function() G_reader_settings:saveSetting(DEFAULT_VIEW_KEY, "characters") end,
                 },
                 {
+                    text = _("Glossary"), radio = true,
+                    checked_func = function() return self:getDefaultView() == "glossary" end,
+                    callback = function() G_reader_settings:saveSetting(DEFAULT_VIEW_KEY, "glossary") end,
+                },
+                {
                     text = _("Book references"), radio = true,
                     checked_func = function() return self:getDefaultView() == "references" end,
                     callback = function() G_reader_settings:saveSetting(DEFAULT_VIEW_KEY, "references") end,
+                },
+            },
+            separator = true,
+        },
+        {
+            text = _("Reference Pages & X-Ray"),
+            help_text = _("Settings for publisher-provided reference pages (characters, glossaries, timelines) and optional KOReader X-Ray integration."),
+            sub_item_table = {
+                {
+                    text = _("Enable detected references"),
+                    checked_func = function() return self:areReferencesEnabled() end,
+                    callback = function()
+                        G_reader_settings:saveSetting(REFS_ENABLED_KEY, not self:areReferencesEnabled())
+                    end,
+                },
+                {
+                    text = _("Use X-Ray character data when available"),
+                    checked_func = function() return self:isXRayEnabled() end,
+                    callback = function()
+                        G_reader_settings:saveSetting(USE_XRAY_KEY, not self:isXRayEnabled())
+                    end,
+                },
+                {
+                    text = _("Character Source: Combine book & X-Ray"), radio = true,
+                    checked_func = function() return self:getXRayPref() == "combine" end,
+                    callback = function() G_reader_settings:saveSetting(XRAY_PREF_KEY, "combine") end,
+                },
+                {
+                    text = _("Character Source: Book list only"), radio = true,
+                    checked_func = function() return self:getXRayPref() == "book_only" end,
+                    callback = function() G_reader_settings:saveSetting(XRAY_PREF_KEY, "book_only") end,
+                },
+                {
+                    text = _("Character Source: X-Ray data only"), radio = true,
+                    checked_func = function() return self:getXRayPref() == "xray_only" end,
+                    callback = function() G_reader_settings:saveSetting(XRAY_PREF_KEY, "xray_only") end,
                 },
             },
             separator = true,

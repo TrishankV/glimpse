@@ -68,7 +68,10 @@ local function plain(html)
     html = html:gsub("</[dD][tT]>", "\n")
     html = html:gsub("</[dD][dD]>", "\n\n")
     html = html:gsub("</[lL][iI]>", "\n")
+    html = html:gsub("</[tT][hH]>", "\t")
+    html = html:gsub("</[tT][dD]>", "\t")
     html = html:gsub("</[tT][rR]>", "\n")
+    html = html:gsub("</[tT][aA][bB][lL][eE]>", "\n\n")
     html = html:gsub("</[dD][iI][vV]>", "\n")
     html = html:gsub("</[sS][eE][cC][tT][iI][oO][nN]>", "\n")
     html = html:gsub("</[aA][rR][tT][iI][cC][lL][eE]>", "\n")
@@ -84,8 +87,19 @@ local LABELS = {
     reference = { "appendix", "appendices", "pronunciation", "pronunciation guide", "family tree", "genealogy", "notes", "bibliography" },
 }
 
+local FALSE_CHAPTER_PREFIXES = { "chapter", "ch.", "part", "book", "volume", "act", "scene", "prologue", "epilogue" }
+
 local function kind_for(label)
     label = collapse_ws(label or ""):lower()
+    if label == "" then return nil end
+
+    -- Check false positives (e.g. "Chapter 3: Characters of the Night")
+    for _, prefix in ipairs(FALSE_CHAPTER_PREFIXES) do
+        if label:find("^" .. prefix .. "%s*%d") or label:find("^" .. prefix .. "%s*[%s:%-—]") then
+            return nil
+        end
+    end
+
     for kind, words in pairs(LABELS) do
         for _, word in ipairs(words) do
             if label == word or label:find("^" .. word .. "[%s:%-—]") then

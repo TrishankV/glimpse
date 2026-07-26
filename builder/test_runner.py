@@ -72,13 +72,25 @@ def main():
 
     kind = kind_for("Characters")
     assert kind == "characters", f"Expected 'characters', got '{kind}'"
-    
+
+    # False positive test
+    false_kind = kind_for("Chapter 3: Characters of the Night")
+    assert false_kind is None, f"Expected None for false positive chapter, got '{false_kind}'"
+
     text = clean_text(plain(html))
     print(f"Extracted characters text:\n---\n{text}\n---")
     assert "Ada Rowan" in text, "Missing Ada Rowan"
     assert "\n" in text, "Line breaks missing in formatted text"
     assert "\n\n" in text, "Paragraph breaks missing in formatted text"
-    print("All python reference tests passed!")
+
+    # Test X-Ray parsing
+    xray_json_path = os.path.join(HERE, "fixture.sdr", "xray.json")
+    assert os.path.exists(xray_json_path), "xray.json missing"
+    with open(xray_json_path, "r") as f:
+        xray_content = f.read()
+    assert "Kaelen Vane" in xray_content, "Missing Kaelen Vane in X-Ray data"
+
+    print("All python reference & X-Ray tests passed!")
 
 if __name__ == "__main__":
     main()

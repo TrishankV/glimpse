@@ -138,6 +138,10 @@ FILES = {
         '<image xlink:href="../images/map.svg" width="900" height="700"/>\n'
         "</svg>",
     ),
+    "OEBPS/text/false_positive.xhtml": xhtml(
+        "Chapter 3: Characters of the Night",
+        "<h1>Chapter 3: Characters of the Night</h1><p>This is a narrative chapter and not a reference page.</p>",
+    ),
     "OEBPS/text/characters.xhtml": xhtml(
         "Characters",
         "<h1>Characters</h1><dl><dt>Ada Rowan</dt><dd>Cartographer of the Realm.</dd>"
@@ -146,6 +150,12 @@ FILES = {
     "OEBPS/text/glossary.xhtml": xhtml(
         "Glossary",
         "<h1>Glossary</h1><dl><dt>Glimmer</dt><dd>A blue light seen before storms.</dd></dl>",
+    ),
+    "OEBPS/text/places.xhtml": xhtml(
+        "Places",
+        "<h1>Places</h1><table><tr><th>Location</th><th>Region</th></tr>"
+        "<tr><td>Greyhold</td><td>Northern Reach</td></tr>"
+        "<tr><td>HighPass</td><td>Eastern Marches</td></tr></table>",
     ),
 }
 
@@ -171,10 +181,12 @@ MANIFEST_ITEMS = [
     ("ch3", "text/ch3.xhtml", "application/xhtml+xml", ""),
     ("ch4", "text/ch4.xhtml", "application/xhtml+xml", ""),
     ("ch5", "text/ch5.xhtml", "application/xhtml+xml", ""),
+    ("falsepos", "text/false_positive.xhtml", "application/xhtml+xml", ""),
     ("characters", "text/characters.xhtml", "application/xhtml+xml", ""),
     ("glossary", "text/glossary.xhtml", "application/xhtml+xml", ""),
+    ("places", "text/places.xhtml", "application/xhtml+xml", ""),
 ]
-SPINE = ["cover", "title", "ch1", "ch2", "ch3", "ch4", "ch5", "characters", "glossary"]
+SPINE = ["cover", "title", "ch1", "ch2", "ch3", "ch4", "ch5", "falsepos", "characters", "glossary", "places"]
 
 manifest = "\n".join(
     f'    <item id="{i}" href="{h}" media-type="{m}"{extra}/>'
@@ -227,7 +239,13 @@ def main():
         with open(dest, "wb") as f:
             f.write(data)
 
-    print(f"wrote {EPUB} and {EXTRACTED}/ ({len(FILES) + 1} entries)")
+    sdr = os.path.join(HERE, "fixture.sdr")
+    os.makedirs(sdr, exist_ok=True)
+    xray_json = os.path.join(sdr, "xray.json")
+    with open(xray_json, "w") as f:
+        f.write('{\n  "characters": [\n    {\n      "name": "Kaelen Vane",\n      "description": "Commander of the Watch",\n      "aliases": ["Commander Vane"]\n    }\n  ]\n}\n')
+
+    print(f"wrote {EPUB}, {EXTRACTED}/ ({len(FILES) + 1} entries), and {xray_json}")
     return 0
 
 

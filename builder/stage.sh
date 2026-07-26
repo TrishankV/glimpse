@@ -11,7 +11,7 @@ DIST="$ROOT/dist"
 
 rm -rf "$DIST/glimpse.koplugin"
 mkdir -p "$DIST/glimpse.koplugin"
-cp "$ROOT"/plugin/_meta.lua "$ROOT"/plugin/main.lua "$ROOT"/plugin/glimpse_scanner.lua "$ROOT"/plugin/glimpse_references.lua \
+cp "$ROOT"/plugin/_meta.lua "$ROOT"/plugin/main.lua "$ROOT"/plugin/glimpse_scanner.lua "$ROOT"/plugin/glimpse_references.lua "$ROOT"/plugin/glimpse_xray.lua \
    "$DIST/glimpse.koplugin/"
 cp -r "$ROOT"/plugin/assets "$DIST/glimpse.koplugin/"
 
